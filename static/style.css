@@ -1,0 +1,25 @@
+body {
+    font-family: "Inter", Arial, sans-serif;
+}
+
+.upload-box {
+    background: #fafafa;
+    border: 2px dashed #c4c4c4;
+    transition: 0.3s;
+}
+
+.upload-box:hover {
+    background: #f0f8ff;
+    border-color: #3b82f6;
+}
+
+.result-card {
+    max-width: 600px;
+    margin: auto;
+}
+
+.result-text {
+    color: #d9534f;
+    font-size: 32px;
+    font-weight: 700;
+}
