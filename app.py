@@ -9,6 +9,7 @@ from tensorflow.keras.applications import MobileNetV2 # type: ignore
 from tensorflow.keras import Model # type: ignore
 import joblib
 from tensorflow.keras.utils import load_img, img_to_array # type: ignore
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -59,6 +60,19 @@ def extract_feature(img_path):
 
 
 # ================================
+# CACHE CONTROL
+# ================================
+@app.after_request
+def add_header(response):
+    """Disable caching for static files"""
+    if 'static' in request.path or '/static/' in request.path:
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
+
+
+# ================================
 # ROUTES
 # ================================
 @app.route("/")
@@ -84,8 +98,13 @@ def predict():
         # Create static folder if not exists
         os.makedirs("static", exist_ok=True)
         
+        # Generate unique filename with timestamp
+        timestamp = int(datetime.now().timestamp() * 1000)  # milliseconds for uniqueness
+        file_ext = os.path.splitext(file.filename)[1] or '.png'
+        filename = f"uploaded_image_{timestamp}{file_ext}"
+        save_path = os.path.join("static", filename)
+        
         # Save uploaded file
-        save_path = os.path.join("static", "uploaded_image.png")
         file.save(save_path)
         
         # Extract features
@@ -98,7 +117,8 @@ def predict():
         return render_template(
             "result.html",
             result=result.upper(),
-            img_path=save_path
+            img_path=filename,  # Pass only filename, not full path
+            timestamp=timestamp  # Pass timestamp for additional cache busting
         )
     
     except Exception as e:
