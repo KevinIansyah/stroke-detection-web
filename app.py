@@ -10,6 +10,8 @@ from tensorflow.keras import Model # type: ignore
 import joblib
 from tensorflow.keras.utils import load_img, img_to_array # type: ignore
 from datetime import datetime
+import base64
+import tempfile
 
 app = Flask(__name__)
 
@@ -64,11 +66,10 @@ def extract_feature(img_path):
 # ================================
 @app.after_request
 def add_header(response):
-    """Disable caching for static files"""
-    if 'static' in request.path or '/static/' in request.path:
-        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
+    """Disable caching for all responses"""
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     return response
 
 
@@ -84,6 +85,8 @@ def home():
 @app.route("/predict", methods=["POST"])
 def predict():
     """Handle image upload and prediction"""
+    temp_path = None  # Initialize untuk cleanup
+    
     try:
         # Check if file exists
         if 'image' not in request.files:
@@ -95,20 +98,31 @@ def predict():
         if file.filename == '':
             return render_template("error.html", error="No image selected"), 400
         
-        # Create static folder if not exists
-        os.makedirs("static", exist_ok=True)
+        # Baca file langsung ke memory
+        img_bytes = file.read()
         
-        # Generate unique filename with timestamp
-        timestamp = int(datetime.now().timestamp() * 1000)  # milliseconds for uniqueness
-        file_ext = os.path.splitext(file.filename)[1] or '.png'
-        filename = f"uploaded_image_{timestamp}{file_ext}"
-        save_path = os.path.join("static", filename)
+        # Deteksi format image untuk base64
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        mime_type = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif'
+        }.get(file_ext, 'image/png')  # Default ke png
         
-        # Save uploaded file
-        file.save(save_path)
+        # Convert ke base64 untuk display
+        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+        
+        # Create unique temporary file dengan timestamp
+        timestamp = int(datetime.now().timestamp() * 1000000)  # microseconds
+        temp_path = f"temp_image_{timestamp}.png"
+        
+        # Save temporary untuk feature extraction
+        with open(temp_path, 'wb') as f:
+            f.write(img_bytes)
         
         # Extract features
-        features = extract_feature(save_path)
+        features = extract_feature(temp_path)
         
         # Predict class
         pred = svm_model.predict(features)[0]
@@ -117,12 +131,20 @@ def predict():
         return render_template(
             "result.html",
             result=result.upper(),
-            img_path=filename,  # Pass only filename, not full path
-            timestamp=timestamp  # Pass timestamp for additional cache busting
+            img_data=img_base64,
+            mime_type=mime_type
         )
     
     except Exception as e:
         return render_template("error.html", error=str(e)), 500
+    
+    finally:
+        # Always cleanup temp file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass  # Ignore cleanup errors
 
 
 # ================================
