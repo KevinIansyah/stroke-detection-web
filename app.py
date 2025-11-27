@@ -11,17 +11,17 @@ import joblib
 from tensorflow.keras.utils import load_img, img_to_array # type: ignore
 from datetime import datetime
 import base64
-import tempfile
 
 app = Flask(__name__)
 
 # ================================
-# LOAD MODEL
+# LOAD MODELS
 # ================================
 MODEL_DIR = "model"
 
-# Path file model
-svm_model_path = os.path.join(MODEL_DIR, "svm_rbf_7015.pkl")
+# Path file models
+brain_classifier_path = os.path.join(MODEL_DIR, "svm_baru_7015.pkl")  # Model 1: Brain vs Non-Brain
+stroke_classifier_path = os.path.join(MODEL_DIR, "svm_rbf_7015.pkl")  # Model 2: Stroke Classification
 
 base_model = MobileNetV2(
     input_shape=(224, 224, 3),
@@ -29,7 +29,6 @@ base_model = MobileNetV2(
     weights='imagenet',
     pooling='avg'
 )
-
 base_model.trainable = False
 
 feature_extractor = Model(
@@ -38,11 +37,13 @@ feature_extractor = Model(
     name='mobilenet_feature_extractor'
 )
 
-# Load SVM Classifier
-svm_model = joblib.load(svm_model_path)
+# Load Both SVM Classifiers
+brain_classifier = joblib.load(brain_classifier_path)
+stroke_classifier = joblib.load(stroke_classifier_path)
 
-# Class mapping
-class_names = ["bleeding", "ischemia", "normal"]
+# Class mappings
+brain_classes = ["non_brain", "brain"]
+stroke_classes = ["bleeding", "ischemia", "normal"]
 
 # Image size
 IMG_SIZE = (224, 224)
@@ -84,67 +85,70 @@ def home():
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    """Handle image upload and prediction"""
-    temp_path = None  # Initialize untuk cleanup
+    """Handle image upload and prediction with 2-stage classification"""
+    temp_path = None
     
     try:
-        # Check if file exists
         if 'image' not in request.files:
             return render_template("error.html", error="No image uploaded"), 400
         
         file = request.files['image']
         
-        # Check if file is selected
         if file.filename == '':
             return render_template("error.html", error="No image selected"), 400
         
-        # Baca file langsung ke memory
         img_bytes = file.read()
         
-        # Deteksi format image untuk base64
         file_ext = os.path.splitext(file.filename)[1].lower()
         mime_type = {
             '.jpg': 'image/jpeg',
             '.jpeg': 'image/jpeg',
             '.png': 'image/png',
             '.gif': 'image/gif'
-        }.get(file_ext, 'image/png')  # Default ke png
+        }.get(file_ext, 'image/png')
         
-        # Convert ke base64 untuk display
         img_base64 = base64.b64encode(img_bytes).decode('utf-8')
         
-        # Create unique temporary file dengan timestamp
-        timestamp = int(datetime.now().timestamp() * 1000000)  # microseconds
+        timestamp = int(datetime.now().timestamp() * 1000000)
         temp_path = f"temp_image_{timestamp}.png"
         
-        # Save temporary untuk feature extraction
         with open(temp_path, 'wb') as f:
             f.write(img_bytes)
         
-        # Extract features
         features = extract_feature(temp_path)
         
-        # Predict class
-        pred = svm_model.predict(features)[0]
-        result = class_names[pred]
+        # ===== STAGE 1: Brain vs Non-Brain Classification =====
+        brain_pred = brain_classifier.predict(features)[0]
+        is_brain = brain_classes[brain_pred]
+    
+        if is_brain == "non_brain":
+            return render_template(
+                "invalid_image.html",
+                error="Gambar yang diunggah bukan MRI otak yang valid",
+                img_data=img_base64,
+                mime_type=mime_type,
+            )
+        
+        # ===== STAGE 2: Stroke Classification (only if brain MRI) =====
+        stroke_pred = stroke_classifier.predict(features)[0]
+        result = stroke_classes[stroke_pred]
         
         return render_template(
             "result.html",
             result=result.upper(),
             img_data=img_base64,
-            mime_type=mime_type
+            mime_type=mime_type,
         )
     
     except Exception as e:
         return render_template("error.html", error=str(e)), 500
     
     finally:
-        # Always cleanup temp file
         if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
             except:
-                pass  # Ignore cleanup errors
+                pass
 
 
 # ================================
